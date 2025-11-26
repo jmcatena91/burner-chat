@@ -44,17 +44,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('chat-message', ({ roomId, encryptedData, iv, username, type, fileName, fileSize, mimeType }) => {
+  socket.on('chat-message', ({ roomId, encryptedData, iv, username }) => {
     // Broadcast to everyone else in that room
     socket.to(roomId).emit('receive-message', {
       encryptedData,
       iv,
       senderName: username,
-      timestamp: new Date().toISOString(),
-      type,
-      fileName,
-      fileSize,
-      mimeType
+      timestamp: new Date().toISOString()
     });
   });
 

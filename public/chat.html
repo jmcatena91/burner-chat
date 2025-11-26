@@ -21,7 +21,7 @@
         <div id="app-title">🔥 Burner Chat</div>
         <div class="header-right">
             <!-- <div id="online-count">Online: <span id="online-count-num">1</span></div> -->
-            <button class="icon-btn small-btn" onclick="showQRCode()" title="Share Room via QR Code">
+            <button class="icon-btn small-btn" onclick="showQRCode(event)" title="Share Room via QR Code">
                 📱
             </button>
             <div id="link-box" onclick="copyLink()">
@@ -88,24 +88,38 @@
     </div>
 
     <!-- QR Code Modal -->
-    <div id="qr-modal-overlay" class="hidden" onclick="if(event.target === this) this.classList.add('hidden')">
+    <div id="qr-modal-overlay" class="hidden" onclick="if(event.target === this) hideQRCode()">
         <div class="modal">
             <h2>Scan to Join</h2>
             <div id="qrcode-container"></div>
             <p style="margin-top: 1rem; font-size: 0.9rem; opacity: 0.7;">Scan with your phone camera</p>
-            <button onclick="document.getElementById('qr-modal-overlay').classList.add('hidden')"
+            <button onclick="hideQRCode()"
                 style="margin-top: 1rem;">Close</button>
         </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/libs/marked/marked.min.js"></script>
-    <script src="/libs/highlight.js/lib/core.js"></script>
-    <script src="/libs/highlight.js/lib/languages/javascript.js"></script>
-    <script src="/libs/highlight.js/lib/languages/python.js"></script>
-    <script src="/libs/highlight.js/lib/languages/bash.js"></script>
-    <script src="/libs/highlight.js/lib/languages/json.js"></script>
-    <script src="/libs/qrcode.min.js"></script>
+    <script src="/libs/marked/lib/marked.umd.js"
+        integrity="sha384-KwzR5her+zXi/Bzz4PVrBjkrjsBZy9adZtt3jA6Jgj3/hzPihRUV6HqMONpTe7Ll"
+        crossorigin="anonymous"></script>
+    <script src="/libs/highlight.js/lib/core.js"
+        integrity="sha384-xnNTYNzyjvVepZwa28oNdxyror+zsTeZBHYIN7VWp8pP0GOA/P4XCggmHRSLRdu0"
+        crossorigin="anonymous"></script>
+    <script src="/libs/highlight.js/lib/languages/javascript.js"
+        integrity="sha384-dSjlzl3IM8VQAnV20eHWkPLmWURZ6l+pfyuDJfIOS42VRGzXhLwV/BQKiEu1jnKC"
+        crossorigin="anonymous"></script>
+    <script src="/libs/highlight.js/lib/languages/python.js"
+        integrity="sha384-IRju7xaNAOwiqNYTZ4IMFK5I5Co9uY1neJXoZjqNHafmA64WVzgutd7FdYtkuNpq"
+        crossorigin="anonymous"></script>
+    <script src="/libs/highlight.js/lib/languages/bash.js"
+        integrity="sha384-l3wpRaw1JAraTmcxPrTmsevJZTCDrvqKEsXaWfkyOPfPY3L9wtUvTf2C8sBAs1xt"
+        crossorigin="anonymous"></script>
+    <script src="/libs/highlight.js/lib/languages/json.js"
+        integrity="sha384-ppeaD0kDdZ9jFjhYeF4vBes8KmtSDhN2NUMxK0LWATsHxVfUTrVVd3z+Ioc52ZDh"
+        crossorigin="anonymous"></script>
+    <script src="/libs/qrcode.min.js"
+        integrity="sha384-HGmnkDZJy7mRkoARekrrj0VjEFSh9a0Z8qxGri/kTTAJkgR8hqD1lHsYSh3JdzRi"
+        crossorigin="anonymous"></script>
     <script>hljs.highlightAll();</script>
     <script src="script.js"></script>
 </body>

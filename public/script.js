@@ -40,41 +40,84 @@ async function startChat() {
     const hash = window.location.hash.substring(1); // Get content after #
 
     if (hash) {
-        // User is joining an existing room
-        const parts = hash.split('-');
-        roomId = parts[0];
-        try {
-            let jwkKey;
-            // Check if it's the old JSON format or new Raw format
-            if (parts[1].startsWith('{') || parts[1].startsWith('%7B')) {
-                // Legacy JSON format (Base64 encoded)
-                jwkKey = JSON.parse(atob(parts[1]));
-                cryptoKey = await importKey(jwkKey);
-            } else {
-                // New Raw format (Base64 encoded raw bytes)
-                const rawBytes = Uint8Array.from(atob(parts[1]), c => c.charCodeAt(0));
-                cryptoKey = await importRawKey(rawBytes);
+        // Check if it contains a key (has a dash)
+        if (hash.includes('-')) {
+            // User is joining with a link containing the key
+            const parts = hash.split('-');
+            roomId = parts[0];
+            const keyPart = parts[1];
+
+            try {
+                let jwkKey;
+                // Check if it's the old JSON format or new Raw format
+                if (keyPart.startsWith('{') || keyPart.startsWith('%7B')) {
+                    // Legacy JSON format (Base64 encoded)
+                    jwkKey = JSON.parse(atob(keyPart));
+                    cryptoKey = await importKey(jwkKey);
+                } else {
+                    // New Raw format (Base64 encoded raw bytes)
+                    const rawBytes = Uint8Array.from(atob(keyPart), c => c.charCodeAt(0));
+                    cryptoKey = await importRawKey(rawBytes);
+                }
+
+                // Save key to session storage
+                const rawKey = await exportRawKey(cryptoKey);
+                const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
+                sessionStorage.setItem(`burner_key_${roomId}`, base64Key);
+
+                // Clean URL (remove key)
+                window.history.replaceState(null, null, `#${roomId}`);
+
+                addSystemMessage("Joined Secure Room. Key saved to session.");
+            } catch (e) {
+                console.error(e);
+                addSystemMessage("Error: Invalid Room Link.");
+                return;
             }
-            addSystemMessage("Joined Secure Room.");
-        } catch (e) {
-            console.error(e);
-            addSystemMessage("Error: Invalid Room Link.");
-            return;
+        } else {
+            // User is joining/reloading with just roomId
+            roomId = hash;
+
+            // Try to get key from session
+            const storedKey = sessionStorage.getItem(`burner_key_${roomId}`);
+            if (storedKey) {
+                try {
+                    const rawBytes = Uint8Array.from(atob(storedKey), c => c.charCodeAt(0));
+                    cryptoKey = await importRawKey(rawBytes);
+                    addSystemMessage("Restored session key.");
+                } catch (e) {
+                    console.error("Error restoring key", e);
+                    addSystemMessage("Error: Could not restore session key.");
+                    return;
+                }
+            } else {
+                addSystemMessage("Error: Missing encryption key. Please use the full invite link.");
+                return;
+            }
         }
     } else {
         // User is creating a new room
         roomId = Math.random().toString(36).substring(2, 10);
         cryptoKey = await generateKey();
 
-        // Export as Raw for shorter URL
+        // Export as Raw
         const rawKey = await exportRawKey(cryptoKey);
         // Convert to Base64 string
         const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
 
+        // Save to session
+        sessionStorage.setItem(`burner_key_${roomId}`, base64Key);
+
         const hashString = `${roomId}-${base64Key}`;
 
-        // Update URL without reloading
-        window.history.replaceState(null, null, `#${hashString}`);
+        // Update URL (we show the full URL initially so they can copy it, 
+        // but maybe we should clean it immediately? 
+        // The user request says "Keys should ... be cleared from the URL immediately".
+        // But if we clear it immediately, how do they copy it?
+        // The "Copy Link" button should generate the full link with key from session/memory.
+        // So yes, we can clean it immediately.
+
+        window.history.replaceState(null, null, `#${roomId}`);
         addSystemMessage("Room Created. Share the URL to invite others.");
     }
 
@@ -136,18 +179,23 @@ async function sendMessage(e) {
     const text = messageInput.value.trim();
     if (!text || !cryptoKey) return;
 
+    const payload = {
+        type: 'text',
+        content: text,
+        timestamp: Date.now()
+    };
+
     const enc = new TextEncoder();
-    const { data, iv } = await encryptData(enc.encode(text));
+    const { data, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
 
     socket.emit('chat-message', {
         roomId,
         encryptedData: data,
         iv,
-        username,
-        type: 'text'
+        username
     });
 
-    addMessage({ type: 'text', content: text }, 'my-message', username);
+    addMessage(payload, 'my-message', username);
     messageInput.value = '';
     socket.emit('stop-typing', roomId);
 }
@@ -164,22 +212,38 @@ async function handleFileSelect(e) {
     const reader = new FileReader();
     reader.onload = async (event) => {
         const buffer = event.target.result;
-        const { data, iv } = await encryptData(buffer);
+
+        // Convert array buffer to base64 string
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const base64Content = btoa(binary);
 
         const type = file.type.startsWith('image/') ? 'image' : 'file';
+
+        const payload = {
+            type: type,
+            content: base64Content,
+            fileName: file.name,
+            fileSize: file.size,
+            mimeType: file.type,
+            timestamp: Date.now()
+        };
+
+        const enc = new TextEncoder();
+        const { data, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
 
         socket.emit('chat-message', {
             roomId,
             encryptedData: data,
             iv,
-            username,
-            type: type,
-            fileName: file.name,
-            fileSize: file.size,
-            mimeType: file.type
+            username
         });
 
-        // For local display
+        // For local display, we can use the buffer directly
         const blob = new Blob([buffer], { type: file.type });
         const url = URL.createObjectURL(blob);
         addMessage({ type, content: url, fileName: file.name, fileSize: file.size }, 'my-message', username);
@@ -333,19 +397,31 @@ function endCall() {
     remoteVideo.srcObject = null;
 }
 
-socket.on('receive-message', async ({ encryptedData, iv, senderName, timestamp, type, fileName, fileSize, mimeType }) => {
+socket.on('receive-message', async ({ encryptedData, iv, senderName, timestamp }) => {
     try {
         const decryptedBuffer = await decryptData(encryptedData, iv);
-        let content;
+        const jsonStr = new TextDecoder().decode(decryptedBuffer);
+        const payload = JSON.parse(jsonStr);
 
-        if (type === 'text') {
-            content = new TextDecoder().decode(decryptedBuffer);
-        } else {
-            const blob = new Blob([decryptedBuffer], { type: mimeType || 'application/octet-stream' });
+        let content = payload.content;
+
+        // If it's binary data (image, file, audio), convert base64 back to blob URL
+        if (['image', 'file', 'audio'].includes(payload.type)) {
+            const binaryString = atob(payload.content);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: payload.mimeType || 'application/octet-stream' });
             content = URL.createObjectURL(blob);
         }
 
-        addMessage({ type: type || 'text', content, fileName, fileSize }, 'their-message', senderName, timestamp);
+        addMessage({
+            type: payload.type,
+            content: content,
+            fileName: payload.fileName,
+            fileSize: payload.fileSize
+        }, 'their-message', senderName, timestamp);
     } catch (err) {
         console.error("Decryption failed", err);
     }
@@ -518,8 +594,18 @@ function updateLinkBox() {
     `;
 }
 
-function copyLink() {
-    navigator.clipboard.writeText(window.location.href);
+async function copyLink() {
+    // Reconstruct full URL with key
+    let fullUrl = window.location.href;
+    if (cryptoKey) {
+        const rawKey = await exportRawKey(cryptoKey);
+        const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
+        // Ensure we don't double append if it's already there (though we clean it)
+        const baseUrl = window.location.href.split('#')[0];
+        fullUrl = `${baseUrl}#${roomId}-${base64Key}`;
+    }
+
+    navigator.clipboard.writeText(fullUrl);
 
     const original = linkBox.innerHTML;
     linkBox.innerHTML = `<span style="color: var(--success-color);">✓ Link Copied!</span>`;
@@ -528,9 +614,60 @@ function copyLink() {
     }, 2000);
 }
 
-// Global exposure for HTML event handlers
-// Screen Sharing
-let screenStream = null;
+// QR Code
+async function showQRCode(event) {
+    const modalOverlay = document.getElementById('qr-modal-overlay');
+    const modal = modalOverlay.querySelector('.modal');
+    const container = document.getElementById('qrcode-container');
+    container.innerHTML = '';
+
+    // Calculate origin for animation
+    if (event && event.currentTarget) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const buttonCenterX = rect.left + rect.width / 2;
+        const buttonCenterY = rect.top + rect.height / 2;
+
+        const viewportCenterX = window.innerWidth / 2;
+        const viewportCenterY = window.innerHeight / 2;
+
+        const deltaX = buttonCenterX - viewportCenterX;
+        const deltaY = buttonCenterY - viewportCenterY;
+
+        modal.style.setProperty('--origin-x', `${deltaX}px`);
+        modal.style.setProperty('--origin-y', `${deltaY}px`);
+    }
+
+    let fullUrl = window.location.href;
+    if (cryptoKey) {
+        const rawKey = await exportRawKey(cryptoKey);
+        const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
+        const baseUrl = window.location.href.split('#')[0];
+        fullUrl = `${baseUrl}#${roomId}-${base64Key}`;
+    }
+
+    QRCode.toCanvas(fullUrl, { width: 200 }, function (err, canvas) {
+        if (err) console.error(err);
+        container.appendChild(canvas);
+    });
+
+    modalOverlay.classList.remove('hidden');
+    modal.classList.remove('animate-out');
+    modal.classList.add('animate-in');
+}
+
+function hideQRCode() {
+    const modalOverlay = document.getElementById('qr-modal-overlay');
+    const modal = modalOverlay.querySelector('.modal');
+
+    modal.classList.remove('animate-in');
+    modal.classList.add('animate-out');
+    modalOverlay.classList.add('hidden');
+
+    // Wait for animation to finish
+    setTimeout(() => {
+        modal.classList.remove('animate-out');
+    }, 300); // Match CSS animation duration
+}
 async function startScreenShare() {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
@@ -588,20 +725,33 @@ async function toggleRecording() {
 
             mediaRecorder.onstop = async () => {
                 const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                const buffer = await blob.arrayBuffer();
-                const { data, iv } = await encryptData(buffer);
 
-                socket.emit('chat-message', {
-                    roomId,
-                    encryptedData: data,
-                    iv,
-                    username,
-                    type: 'audio',
-                    mimeType: 'audio/webm'
-                });
+                // Convert to Base64
+                const reader = new FileReader();
+                reader.onloadend = async () => {
+                    const base64data = reader.result.split(',')[1]; // Remove data URL prefix
 
-                const url = URL.createObjectURL(blob);
-                addMessage({ type: 'audio', content: url }, 'my-message', username);
+                    const payload = {
+                        type: 'audio',
+                        content: base64data,
+                        mimeType: 'audio/webm',
+                        timestamp: Date.now()
+                    };
+
+                    const enc = new TextEncoder();
+                    const { data, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
+
+                    socket.emit('chat-message', {
+                        roomId,
+                        encryptedData: data,
+                        iv,
+                        username
+                    });
+
+                    const url = URL.createObjectURL(blob);
+                    addMessage({ type: 'audio', content: url }, 'my-message', username);
+                };
+                reader.readAsDataURL(blob);
 
                 stream.getTracks().forEach(track => track.stop());
             };
@@ -616,20 +766,6 @@ async function toggleRecording() {
     }
 }
 
-// QR Code
-function showQRCode() {
-    const modal = document.getElementById('qr-modal-overlay');
-    const container = document.getElementById('qrcode-container');
-    container.innerHTML = '';
-
-    QRCode.toCanvas(window.location.href, { width: 200 }, function (err, canvas) {
-        if (err) console.error(err);
-        container.appendChild(canvas);
-    });
-
-    modal.classList.remove('hidden');
-}
-
 // Exports
 window.copyLink = copyLink;
 window.sendMessage = sendMessage;
@@ -640,6 +776,7 @@ window.endCall = endCall;
 window.startScreenShare = startScreenShare;
 window.toggleRecording = toggleRecording;
 window.showQRCode = showQRCode;
+window.hideQRCode = hideQRCode;
 window.joinStream = joinStream;
 
 // UI
