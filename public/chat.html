@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Burner Chat - Secure & Ephemeral</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="header">
+        <div id="app-title">🔥 Burner Chat</div>
+        <div class="header-right">
+            <!-- <div id="online-count">Online: <span id="online-count-num">1</span></div> -->
+            <div id="link-box" onclick="copyLink()">
+                <span>Generating Room...</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-layout">
+        <div id="sidebar">
+            <h3>Users <span id="user-count-badge">0</span></h3>
+            <ul id="user-list"></ul>
+        </div>
+        <div id="chat-container">
+            <!-- Messages will appear here -->
+        </div>
+    </div>
+
+    <div id="typing-indicator"></div>
+
+    <form id="controls" onsubmit="sendMessage(event)">
+        <button type="button" class="icon-btn" onclick="document.getElementById('file-input').click()"
+            title="Send File">
+            📎
+        </button>
+        <button type="button" class="icon-btn" onclick="startCall()" title="Start Video Call">
+            📹
+        </button>
+        <input type="file" id="file-input" hidden onchange="handleFileSelect(event)">
+
+        <input type="text" id="message-input" placeholder="Type a secure message..." autocomplete="off">
+        <button type="submit">Send</button>
+    </form>
+
+    <!-- Username Modal -->
+    <div id="modal-overlay">
+        <div class="modal" id="username-modal">
+            <h2>Welcome</h2>
+            <p>Enter a display name to join the chat.</p>
+            <input type="text" id="username-input" placeholder="Your Name" maxlength="15"
+                onkeydown="if(event.key === 'Enter') setUsername()">
+            <button onclick="setUsername()">Join Chat</button>
+        </div>
+    </div>
+
+    <!-- Video Call Container -->
+    <div id="video-call-overlay" class="hidden">
+        <div class="video-container">
+            <video id="remote-video" autoplay playsinline></video>
+            <video id="local-video" autoplay playsinline muted></video>
+            <div class="call-controls">
+                <button onclick="endCall()" class="end-call-btn" title="End Call">
+                    📞
+                </button>
+            </div>
+            <div id="call-status">Connecting...</div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>

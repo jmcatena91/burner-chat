@@ -1,47 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Burner Chat</title>
+    <title>Burner Chat - Secure & Ephemeral</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-    <div id="header">
-        <div id="app-title">🔥 Burner Chat</div>
-        <div style="display: flex; align-items: center;">
-            <div id="online-count">Online: <span id="online-count-num">1</span></div>
-            <div id="link-box" onclick="copyLink()">
-                <span>Generating Room...</span>
-            </div>
+    <div class="landing-container">
+        <div class="hero-content">
+            <div class="logo">🔥 Burner Chat</div>
+            <h1>Secure, Ephemeral Messaging</h1>
+            <p class="hero-text">
+                Chat securely with end-to-end encryption. No logs, no history, no traces.
+                Your identity is temporary and exists only in this tab.
+            </p>
+            <a href="chat.html" class="cta-button">Start Chatting</a>
         </div>
     </div>
-
-    <div id="chat-container">
-        <!-- Messages will appear here -->
-    </div>
-
-    <div id="typing-indicator"></div>
-
-    <form id="controls" onsubmit="sendMessage(event)">
-        <input type="text" id="message-input" placeholder="Type a secure message..." autocomplete="off">
-        <button type="submit">Send</button>
-    </form>
-
-    <!-- Username Modal -->
-    <div id="modal-overlay">
-        <div class="modal">
-            <h2>Welcome</h2>
-            <p>Enter a display name to join the chat.</p>
-            <input type="text" id="username-input" placeholder="Your Name" maxlength="15" onkeydown="if(event.key === 'Enter') setUsername()">
-            <button onclick="setUsername()">Join Chat</button>
-        </div>
-    </div>
-
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
 </body>
+
 </html>

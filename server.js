@@ -23,18 +23,31 @@ io.on('connection', (socket) => {
     // Notify others
     socket.to(roomId).emit('user-connected', username);
 
-    // Update user count for everyone in room
-    io.to(roomId).emit('room-users', Object.keys(roomUsers[roomId]).length);
+    // Update user list for everyone in room
+    io.to(roomId).emit('room-users', Object.values(roomUsers[roomId]));
   });
 
-  socket.on('chat-message', ({ roomId, encryptedData, iv, username }) => {
+  socket.on('chat-message', ({ roomId, encryptedData, iv, username, type, fileName, fileSize, mimeType }) => {
     // Broadcast to everyone else in that room
     socket.to(roomId).emit('receive-message', {
       encryptedData,
       iv,
       senderName: username,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      type,
+      fileName,
+      fileSize,
+      mimeType
     });
+  });
+
+  socket.on('signal', ({ roomId, signalData, target }) => {
+    // Relay signal to specific target or broadcast
+    if (target) {
+      io.to(target).emit('signal', { signalData, sender: socket.id });
+    } else {
+      socket.to(roomId).emit('signal', { signalData, sender: socket.id });
+    }
   });
 
   socket.on('typing', ({ roomId, username }) => {
@@ -59,8 +72,8 @@ io.on('connection', (socket) => {
         if (Object.keys(roomUsers[roomId]).length === 0) {
           delete roomUsers[roomId];
         } else {
-          // Update count
-          io.to(roomId).emit('room-users', Object.keys(roomUsers[roomId]).length);
+          // Update user list
+          io.to(roomId).emit('room-users', Object.values(roomUsers[roomId]));
         }
       }
     }
