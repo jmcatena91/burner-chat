@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Burner Chat</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: #eee; display: flex; flex-direction: column; height: 100vh; margin: 0; }
+        #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .message { padding: 10px 15px; border-radius: 8px; max-width: 70%; word-wrap: break-word; }
+        .my-message { background: #007bff; align-self: flex-end; }
+        .their-message { background: #333; align-self: flex-start; }
+        .system-message { color: #888; font-size: 0.8em; text-align: center; align-self: center; }
+        #controls { padding: 20px; background: #222; display: flex; gap: 10px; }
+        input { flex: 1; padding: 10px; border-radius: 4px; border: none; background: #333; color: white; }
+        button { padding: 10px 20px; background: #28a745; border: none; color: white; cursor: pointer; border-radius: 4px; }
+        #link-box { padding: 10px; background: #332200; color: #ffcc00; text-align: center; font-size: 0.9em; cursor: pointer;}
+    </style>
+</head>
+<body>
+    <div id="link-box" onclick="copyLink()">Generating Secure Room...</div>
+    <div id="chat-container"></div>
+    <form id="controls" onsubmit="sendMessage(event)">
+        <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+        <button type="submit">Send</button>
+    </form>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let cryptoKey = null;
+        let roomId = null;
+
+        // 1. Initialization Logic
+        async function init() {
+            const hash = window.location.hash.substring(1); // Get content after #
+            
+            if (hash) {
+                // User is joining an existing room
+                const parts = hash.split('-');
+                roomId = parts[0];
+                const jwkKey = JSON.parse(atob(parts[1])); // Decode key
+                cryptoKey = await importKey(jwkKey);
+                addSystemMessage("Joined Secure Room.");
+            } else {
+                // User is creating a new room
+                roomId = Math.random().toString(36).substring(2, 10);
+                cryptoKey = await generateKey();
+                const exportedKey = await exportKey(cryptoKey);
+                const hashString = `${roomId}-${btoa(JSON.stringify(exportedKey))}`;
+                
+                // Update URL without reloading
+                window.history.replaceState(null, null, `#${hashString}`);
+                addSystemMessage("Room Created. URL contains the key. Share it to chat.");
+            }
+
+            document.getElementById('link-box').innerText = `SECURE LINK (Click to Copy): ${window.location.href}`;
+            
+            // Join the socket room
+            socket.emit('join-room', roomId);
+        }
+
+        // 2. Crypto Helpers (Web Crypto API)
+        async function generateKey() {
+            return await window.crypto.subtle.generateKey(
+                { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+            );
+        }
+
+        async function importKey(jwk) {
+            return await window.crypto.subtle.importKey(
+                "jwk", jwk, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]
+            );
+        }
+
+        async function exportKey(key) {
+            return await window.crypto.subtle.exportKey("jwk", key);
+        }
+
+        async function encryptMessage(text) {
+            const enc = new TextEncoder();
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await window.crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv }, cryptoKey, enc.encode(text)
+            );
+            return {
+                data: Array.from(new Uint8Array(encrypted)), // Convert to array for socket
+                iv: Array.from(iv)
+            };
+        }
+
+        async function decryptMessage(data, iv) {
+            const decrypted = await window.crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: new Uint8Array(iv) },
+                cryptoKey,
+                new Uint8Array(data)
+            );
+            return new TextDecoder().decode(decrypted);
+        }
+
+        // 3. Chat Logic
+        async function sendMessage(e) {
+            e.preventDefault();
+            const input = document.getElementById('message-input');
+            const text = input.value;
+            if (!text) return;
+
+            // Encrypt
+            const { data, iv } = await encryptMessage(text);
+
+            // Send to server (Server only sees 'data' and 'iv', not text)
+            socket.emit('chat-message', { roomId, encryptedData: data, iv });
+
+            addMessage(text, 'my-message');
+            input.value = '';
+        }
+
+        socket.on('receive-message', async ({ encryptedData, iv }) => {
+            try {
+                const text = await decryptMessage(encryptedData, iv);
+                addMessage(text, 'their-message');
+            } catch (err) {
+                console.error("Decryption failed", err);
+            }
+        });
+
+        function addMessage(text, className) {
+            const div = document.createElement('div');
+            div.className = `message ${className}`;
+            div.textContent = text;
+            document.getElementById('chat-container').appendChild(div);
+            div.scrollIntoView();
+        }
+
+        function addSystemMessage(text) {
+            const div = document.createElement('div');
+            div.className = 'system-message';
+            div.textContent = text;
+            document.getElementById('chat-container').appendChild(div);
+        }
+
+        function copyLink() {
+            navigator.clipboard.writeText(window.location.href);
+            alert("Link copied to clipboard!");
+        }
+
+        init();
+    </script>
+</body>
+</html>
