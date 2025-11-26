@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "dompurify": "^3.3.0",
     "express": "^5.1.0",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.1",

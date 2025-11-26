@@ -10,6 +10,7 @@ const io = new Server(server);
 app.use(express.static('public'));
 app.use('/libs/marked', express.static(__dirname + '/node_modules/marked'));
 app.use('/libs/highlight.js', express.static(__dirname + '/node_modules/highlight.js'));
+app.use('/libs/dompurify', express.static(__dirname + '/node_modules/dompurify'));
 
 // Store room users: { roomId: { socketId: username } }
 const roomUsers = {};
@@ -24,7 +25,7 @@ io.on('connection', (socket) => {
     roomUsers[roomId][socket.id] = { username, isSharing: false, id: socket.id };
 
     // Notify others
-    socket.to(roomId).emit('user-connected', username);
+    socket.to(roomId).emit('user-connected', { username, id: socket.id });
 
     // Update user list for everyone in room
     io.to(roomId).emit('room-users', Object.values(roomUsers[roomId]));
@@ -50,6 +51,7 @@ io.on('connection', (socket) => {
       encryptedData,
       iv,
       senderName: username,
+      senderId: socket.id,
       timestamp: new Date().toISOString()
     });
   });
@@ -78,7 +80,7 @@ io.on('connection', (socket) => {
         const { username } = roomUsers[roomId][socket.id];
 
         // Notify others
-        socket.to(roomId).emit('user-disconnected', username);
+        socket.to(roomId).emit('user-disconnected', { username, id: socket.id });
 
         // Remove user
         delete roomUsers[roomId][socket.id];

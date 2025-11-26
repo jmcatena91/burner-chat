@@ -14,6 +14,22 @@ const modalOverlay = document.getElementById('modal-overlay');
 const usernameInput = document.getElementById('username-input');
 
 // 1. Initialization Logic
+// Immediate URL handling to prevent history leaks
+(async function handleUrl() {
+    const hash = window.location.hash.substring(1);
+    if (hash && hash.includes('-')) {
+        const parts = hash.split('-');
+        const rId = parts[0];
+        const keyPart = parts[1];
+
+        // Save to session immediately
+        sessionStorage.setItem(`burner_pending_key_${rId}`, keyPart);
+
+        // Clean URL immediately
+        window.history.replaceState(null, null, `#${rId}`);
+    }
+})();
+
 async function init() {
     // Check for username
     const storedName = sessionStorage.getItem('burner_username');
@@ -40,33 +56,26 @@ async function startChat() {
     const hash = window.location.hash.substring(1); // Get content after #
 
     if (hash) {
-        // Check if it contains a key (has a dash)
-        if (hash.includes('-')) {
-            // User is joining with a link containing the key
-            const parts = hash.split('-');
-            roomId = parts[0];
-            const keyPart = parts[1];
+        roomId = hash; // URL is already cleaned or just roomId
 
+        // Check for pending key from immediate handler
+        const pendingKey = sessionStorage.getItem(`burner_pending_key_${roomId}`);
+        if (pendingKey) {
             try {
                 let jwkKey;
-                // Check if it's the old JSON format or new Raw format
-                if (keyPart.startsWith('{') || keyPart.startsWith('%7B')) {
-                    // Legacy JSON format (Base64 encoded)
-                    jwkKey = JSON.parse(atob(keyPart));
+                if (pendingKey.startsWith('{') || pendingKey.startsWith('%7B')) {
+                    jwkKey = JSON.parse(atob(pendingKey));
                     cryptoKey = await importKey(jwkKey);
                 } else {
-                    // New Raw format (Base64 encoded raw bytes)
-                    const rawBytes = Uint8Array.from(atob(keyPart), c => c.charCodeAt(0));
+                    const rawBytes = Uint8Array.from(atob(pendingKey), c => c.charCodeAt(0));
                     cryptoKey = await importRawKey(rawBytes);
                 }
 
-                // Save key to session storage
+                // Save properly
                 const rawKey = await exportRawKey(cryptoKey);
                 const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
                 sessionStorage.setItem(`burner_key_${roomId}`, base64Key);
-
-                // Clean URL (remove key)
-                window.history.replaceState(null, null, `#${roomId}`);
+                sessionStorage.removeItem(`burner_pending_key_${roomId}`);
 
                 addSystemMessage("Joined Secure Room. Key saved to session.");
             } catch (e) {
@@ -75,10 +84,7 @@ async function startChat() {
                 return;
             }
         } else {
-            // User is joining/reloading with just roomId
-            roomId = hash;
-
-            // Try to get key from session
+            // Try to get key from session (normal restore)
             const storedKey = sessionStorage.getItem(`burner_key_${roomId}`);
             if (storedKey) {
                 try {
@@ -97,25 +103,17 @@ async function startChat() {
         }
     } else {
         // User is creating a new room
-        roomId = Math.random().toString(36).substring(2, 10);
+        const randomBytes = new Uint8Array(5);
+        window.crypto.getRandomValues(randomBytes);
+        roomId = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
         cryptoKey = await generateKey();
 
         // Export as Raw
         const rawKey = await exportRawKey(cryptoKey);
-        // Convert to Base64 string
         const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
 
         // Save to session
         sessionStorage.setItem(`burner_key_${roomId}`, base64Key);
-
-        const hashString = `${roomId}-${base64Key}`;
-
-        // Update URL (we show the full URL initially so they can copy it, 
-        // but maybe we should clean it immediately? 
-        // The user request says "Keys should ... be cleared from the URL immediately".
-        // But if we clear it immediately, how do they copy it?
-        // The "Copy Link" button should generate the full link with key from session/memory.
-        // So yes, we can clean it immediately.
 
         window.history.replaceState(null, null, `#${roomId}`);
         addSystemMessage("Room Created. Share the URL to invite others.");
@@ -124,8 +122,15 @@ async function startChat() {
     updateLinkBox();
 
     // Join the socket room
-    socket.emit('join-room', { roomId, username });
+    // Send "Anonymous" to server to hide metadata
+    socket.emit('join-room', { roomId, username: 'Anonymous' });
+
+    // Announce real identity via encrypted channel
+    setTimeout(announceIdentity, 500); // Wait for connection
 }
+
+// Map socketId -> realUsername
+const userMap = {};
 
 // 2. Crypto Helpers (Web Crypto API)
 async function generateKey() {
@@ -171,6 +176,26 @@ async function decryptData(data, iv) {
         cryptoKey,
         new Uint8Array(data)
     );
+}
+
+async function announceIdentity() {
+    if (!cryptoKey || !username) return;
+
+    const payload = {
+        type: 'identity',
+        content: username,
+        timestamp: Date.now()
+    };
+
+    const enc = new TextEncoder();
+    const { data, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
+
+    socket.emit('chat-message', {
+        roomId,
+        encryptedData: data,
+        iv,
+        username: 'Anonymous' // Metadata hidden
+    });
 }
 
 // 3. Chat Logic
@@ -397,11 +422,23 @@ function endCall() {
     remoteVideo.srcObject = null;
 }
 
-socket.on('receive-message', async ({ encryptedData, iv, senderName, timestamp }) => {
+socket.on('receive-message', async ({ encryptedData, iv, senderName, senderId, timestamp }) => {
     try {
         const decryptedBuffer = await decryptData(encryptedData, iv);
         const jsonStr = new TextDecoder().decode(decryptedBuffer);
         const payload = JSON.parse(jsonStr);
+
+        if (payload.type === 'identity') {
+            // Update user map
+            if (senderId) {
+                userMap[senderId] = payload.content;
+                updateUserList(); // Refresh list with new name
+
+                // Also update any previous messages from this user? 
+                // Too complex for now, just future messages.
+            }
+            return;
+        }
 
         let content = payload.content;
 
@@ -416,52 +453,62 @@ socket.on('receive-message', async ({ encryptedData, iv, senderName, timestamp }
             content = URL.createObjectURL(blob);
         }
 
+        // Use mapped name if available
+        const realName = (userMap[senderId]) ? userMap[senderId] : senderName;
+
         addMessage({
             type: payload.type,
             content: content,
             fileName: payload.fileName,
             fileSize: payload.fileSize
-        }, 'their-message', senderName, timestamp);
+        }, 'their-message', realName, timestamp);
     } catch (err) {
         console.error("Decryption failed", err);
     }
 });
 
-socket.on('user-connected', (name) => {
-    addSystemMessage(`${name || 'A user'} joined the room.`);
+socket.on('user-connected', ({ username, id }) => {
+    // username is 'Anonymous' usually
+    addSystemMessage(`A user joined the room.`);
+
+    // Announce our identity to this specific user?
+    // Or just broadcast again? Broadcast is easier.
+    announceIdentity();
 });
 
-socket.on('user-disconnected', (name) => {
-    addSystemMessage(`${name || 'A user'} left the room.`);
+socket.on('user-disconnected', ({ username, id }) => {
+    const name = userMap[id] || 'A user';
+    addSystemMessage(`${name} left the room.`);
+    delete userMap[id];
+    updateUserList();
 });
+
+let currentRoomUsers = []; // Store raw list from server
 
 socket.on('room-users', (users) => {
+    currentRoomUsers = users;
+    updateUserList();
+});
+
+function updateUserList() {
     const userListEl = document.getElementById('user-list');
     const userCountBadge = document.getElementById('user-count-badge');
 
-    if (!Array.isArray(users)) {
-        console.error("Invalid user list received:", users);
-        return;
-    }
+    if (!Array.isArray(currentRoomUsers)) return;
 
     if (userListEl) {
         userListEl.innerHTML = '';
-        users.forEach(user => {
+        currentRoomUsers.forEach(user => {
             const li = document.createElement('li');
 
-            // Handle object structure { username, isSharing } or legacy string
-            let name = user;
-            let isSharing = false;
-            let socketId = null;
+            // Handle object structure { username, isSharing, id }
+            let name = user.username;
+            let isSharing = user.isSharing;
+            let socketId = user.id;
 
-            if (typeof user === 'object') {
-                name = user.username;
-                isSharing = user.isSharing;
-                // We need socketId to join, but room-users array values are just the user objects. 
-                // Wait, server sends Object.values(roomUsers[roomId]). 
-                // roomUsers[roomId] is { socketId: { username, isSharing } }.
-                // So Object.values loses the socketId key! 
-                // I need to update server to include socketId in the object.
+            // Use mapped name if available
+            if (userMap[socketId]) {
+                name = userMap[socketId];
             }
 
             li.textContent = name;
@@ -470,10 +517,7 @@ socket.on('room-users', (users) => {
                 const joinBtn = document.createElement('button');
                 joinBtn.innerText = 'Join Stream';
                 joinBtn.className = 'join-btn';
-                // We need the socketId here. 
-                // Temporary fix: I will update server.js to include id.
-                // For now, let's assume I fix server.js next.
-                joinBtn.onclick = () => joinStream(user.id);
+                joinBtn.onclick = () => joinStream(socketId);
                 li.appendChild(joinBtn);
             }
 
@@ -482,9 +526,9 @@ socket.on('room-users', (users) => {
     }
 
     if (userCountBadge) {
-        userCountBadge.innerText = users.length;
+        userCountBadge.innerText = currentRoomUsers.length;
     }
-});
+}
 
 // Typing Indicators
 messageInput.addEventListener('input', () => {
@@ -548,7 +592,9 @@ function addMessage(msgData, className, senderName, timeStr) {
         msgDiv.appendChild(audio);
     } else {
         // Default to text message with Markdown (including 'text' type)
-        msgDiv.innerHTML = marked.parse(msgData.content);
+        const rawHtml = marked.parse(msgData.content);
+        const cleanHtml = DOMPurify.sanitize(rawHtml);
+        msgDiv.innerHTML = cleanHtml;
         msgDiv.querySelectorAll('pre code').forEach((block) => {
             hljs.highlightElement(block);
         });

@@ -47,7 +47,20 @@ node server.js
 ```
 
 The server will start on port **3000** by default.
+## Security
 
+Burner Chat uses Web Crypto API (AES-GCM) for end-to-end encryption. Keys are generated client-side and never sent to the server.
+
+### Features
+- **End-to-End Encryption**: Messages and files are encrypted before leaving your device.
+- **Ephemeral**: No logs are kept on the server. Data exists only in memory while the room is active.
+- **Metadata Protection**: Usernames are encrypted and exchanged only between peers. The server sees all users as "Anonymous".
+- **XSS Protection**: All message content is sanitized using DOMPurify.
+
+### Limitations
+- **Forward Secrecy**: The same key is used for the duration of the room session. If a key is compromised, past messages in that session could be decrypted.
+- **Trust**: The client code is served by the host. In a high-threat model, a compromised host could serve malicious code. For maximum security, audit the code and host it yourself.
+- **Browser History**: While we clear the URL immediately, the encryption key may briefly appear in your browser history. Use Incognito mode for better privacy.
 ### Accessing the App
 
 Open your browser and navigate to:
