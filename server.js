@@ -14,10 +14,26 @@ app.use('/libs/dompurify', express.static(__dirname + '/node_modules/dompurify')
 
 // Store room users: { roomId: { socketId: username } }
 const roomUsers = {};
+// Store room passwords: { roomId: passwordHash }
+const roomPasswords = {};
 
 io.on('connection', (socket) => {
 
-  socket.on('join-room', ({ roomId, username }) => {
+  socket.on('join-room', ({ roomId, username, password }) => {
+    // Check if room exists
+    if (roomUsers[roomId]) {
+      // Room exists, check password
+      if (roomPasswords[roomId] && roomPasswords[roomId] !== password) {
+        socket.emit('error-message', 'Incorrect password');
+        return;
+      }
+    } else {
+      // Room doesn't exist, create it and set password if provided
+      if (password) {
+        roomPasswords[roomId] = password;
+      }
+    }
+
     socket.join(roomId);
 
     // Store user info

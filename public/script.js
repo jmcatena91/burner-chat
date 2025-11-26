@@ -12,6 +12,7 @@ const typingIndicator = document.getElementById('typing-indicator');
 const onlineCountEl = document.getElementById('online-count-num');
 const modalOverlay = document.getElementById('modal-overlay');
 const usernameInput = document.getElementById('username-input');
+const passwordInput = document.getElementById('password-input');
 
 // 1. Initialization Logic
 // Immediate URL handling to prevent history leaks
@@ -42,11 +43,35 @@ async function init() {
     }
 }
 
+function toggleUsernameInput() {
+    const checkbox = document.getElementById('anon-checkbox');
+    usernameInput.disabled = checkbox.checked;
+    if (checkbox.checked) {
+        usernameInput.value = '';
+        usernameInput.placeholder = 'Anonymous';
+    } else {
+        usernameInput.placeholder = 'Your Name';
+    }
+}
+
 function setUsername() {
+    const checkbox = document.getElementById('anon-checkbox');
     const name = usernameInput.value.trim();
-    if (name) {
+    const password = passwordInput.value.trim();
+
+    if (checkbox.checked) {
+        username = 'Anonymous';
+    } else if (name) {
         username = name;
+    } else {
+        return; // Require name if not anon
+    }
+
+    if (username) {
         sessionStorage.setItem('burner_username', username);
+        if (password) {
+            sessionStorage.setItem('burner_room_password', password);
+        }
         modalOverlay.classList.add('hidden');
         startChat();
     }
@@ -123,7 +148,8 @@ async function startChat() {
 
     // Join the socket room
     // Send "Anonymous" to server to hide metadata
-    socket.emit('join-room', { roomId, username: 'Anonymous' });
+    const password = sessionStorage.getItem('burner_room_password');
+    socket.emit('join-room', { roomId, username: 'Anonymous', password });
 
     // Announce real identity via encrypted channel
     setTimeout(announceIdentity, 500); // Wait for connection
@@ -222,7 +248,21 @@ async function sendMessage(e) {
 
     addMessage(payload, 'my-message', username);
     messageInput.value = '';
-    socket.emit('stop-typing', roomId);
+
+    // Stop typing immediately
+    sendTypingStatus(false);
+}
+
+async function sendTypingStatus(isTyping) {
+    if (!cryptoKey) return;
+    const payload = {
+        type: 'typing_status',
+        content: { isTyping },
+        timestamp: Date.now()
+    };
+    const enc = new TextEncoder();
+    const { data, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
+    socket.emit('chat-message', { roomId, encryptedData: data, iv, username });
 }
 
 async function handleFileSelect(e) {
@@ -288,7 +328,7 @@ const config = {
 };
 
 const videoOverlay = document.getElementById('video-call-overlay');
-const localVideo = document.getElementById('local-video');
+// const localVideo = document.getElementById('local-video'); // Removed
 const remoteVideo = document.getElementById('remote-video'); // Note: This might need to handle multiple videos in future, but for now 1:1 viewing
 const callStatus = document.getElementById('call-status');
 
@@ -433,9 +473,54 @@ socket.on('receive-message', async ({ encryptedData, iv, senderName, senderId, t
             if (senderId) {
                 userMap[senderId] = payload.content;
                 updateUserList(); // Refresh list with new name
+            }
+            return;
+        }
 
-                // Also update any previous messages from this user? 
-                // Too complex for now, just future messages.
+
+        if (payload.type === 'typing_status') {
+            const { isTyping } = payload.content;
+            const realName = (userMap[senderId]) ? userMap[senderId] : senderName;
+            updateTypingIndicator(realName, isTyping);
+            return;
+        }
+
+        if (payload.type === 'read_receipt') {
+            const { messageId } = payload.content;
+            const msgDiv = document.getElementById(`msg-${messageId}`);
+            if (msgDiv) {
+                const statusSpan = msgDiv.querySelector('.read-status');
+                if (statusSpan) {
+                    statusSpan.innerText = ' ✓✓';
+                    statusSpan.title = 'Read';
+                    statusSpan.style.color = '#4ade80'; // Green
+                }
+            }
+            return;
+        }
+
+        if (payload.type === 'whiteboard') {
+            const { action } = payload.content;
+
+            // Notification for drawing (debounced)
+            if (action === 'draw') {
+                const realName = (userMap[senderId]) ? userMap[senderId] : senderName;
+                notifyWhiteboardActivity(realName);
+            }
+
+            if (action === 'clear') {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                const realName = (userMap[senderId]) ? userMap[senderId] : senderName;
+                addSystemMessage(`${realName} cleared the whiteboard.`);
+            } else if (action === 'draw') {
+                const { x0, y0, x1, y1, color, width } = payload.content;
+                ctx.beginPath();
+                ctx.moveTo(x0, y0);
+                ctx.lineTo(x1, y1);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = width;
+                ctx.lineCap = 'round';
+                ctx.stroke();
             }
             return;
         }
@@ -484,10 +569,36 @@ socket.on('user-disconnected', ({ username, id }) => {
 });
 
 let currentRoomUsers = []; // Store raw list from server
+let previousSharingStates = {}; // Map socketId -> boolean
 
 socket.on('room-users', (users) => {
+    // Check for sharing status changes
+    users.forEach(user => {
+        const wasSharing = previousSharingStates[user.id] || false;
+        const isSharing = user.isSharing;
+
+        if (isSharing && !wasSharing) {
+            const name = userMap[user.id] || user.username;
+            addSystemMessage(`${name} started sharing their screen.`);
+        } else if (!isSharing && wasSharing) {
+            const name = userMap[user.id] || user.username;
+            addSystemMessage(`${name} stopped sharing their screen.`);
+        }
+
+        previousSharingStates[user.id] = isSharing;
+    });
+
     currentRoomUsers = users;
     updateUserList();
+});
+
+socket.on('error-message', (msg) => {
+    alert(msg);
+    // If password error, reload to try again
+    if (msg === 'Incorrect password') {
+        sessionStorage.removeItem('burner_room_password');
+        window.location.reload();
+    }
 });
 
 function updateUserList() {
@@ -509,6 +620,9 @@ function updateUserList() {
             // Use mapped name if available
             if (userMap[socketId]) {
                 name = userMap[socketId];
+            } else if (socketId === socket.id && username) {
+                // If it's me, use my local username variable (unless I'm anon)
+                name = username;
             }
 
             li.textContent = name;
@@ -532,67 +646,67 @@ function updateUserList() {
 
 // Typing Indicators
 messageInput.addEventListener('input', () => {
-    socket.emit('typing', { roomId, username });
+    sendTypingStatus(true);
 
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
-        socket.emit('stop-typing', roomId);
+        sendTypingStatus(false);
     }, 1000);
 });
 
-socket.on('user-typing', (name) => {
-    typingIndicator.innerText = `${name} is typing...`;
-    typingIndicator.classList.add('visible');
-});
-
-socket.on('user-stop-typing', () => {
-    typingIndicator.classList.remove('visible');
-});
+function updateTypingIndicator(name, isTyping) {
+    if (isTyping) {
+        typingIndicator.innerText = `${name} is typing...`;
+        typingIndicator.classList.add('visible');
+    } else {
+        typingIndicator.classList.remove('visible');
+    }
+}
 
 
 // UI Helpers
-function addMessage(msgData, className, senderName, timeStr) {
+function addMessage(data, className, senderName, timestamp = Date.now()) {
+    const chatContainer = document.getElementById('chat-container');
     const wrapper = document.createElement('div');
     wrapper.className = `message-wrapper ${className}`;
 
+    // Generate a unique ID for the message to track read status
+    const messageId = `${timestamp}-${Math.random().toString(36).substr(2, 9)}`;
+    wrapper.id = `msg-${messageId}`;
+
     const nameLabel = document.createElement('div');
     nameLabel.className = 'username-label';
-    nameLabel.textContent = senderName || 'Unknown';
+    nameLabel.innerText = senderName;
 
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message';
 
-    // Handle Content Type
-    if (msgData.type === 'text') {
-        msgDiv.textContent = msgData.content;
-    } else if (msgData.type === 'image') {
+    // Content handling...
+    if (data.type === 'text') {
+        const cleanHtml = DOMPurify.sanitize(marked.parse(data.content));
+        msgDiv.innerHTML = cleanHtml;
+        msgDiv.querySelectorAll('pre code').forEach((block) => {
+            hljs.highlightElement(block);
+        });
+    } else if (data.type === 'image') {
         const img = document.createElement('img');
-        img.src = msgData.content;
-        img.onload = () => wrapper.scrollIntoView({ behavior: 'smooth' }); // Scroll after load
+        img.src = data.content;
         msgDiv.appendChild(img);
-    } else if (msgData.type === 'file') {
+    } else if (data.type === 'file') {
         const link = document.createElement('a');
-        link.href = msgData.content;
-        link.download = msgData.fileName || 'download';
+        link.href = data.content;
+        link.download = data.fileName;
         link.className = 'file-attachment';
-
-        link.innerHTML = `
-            <div class="file-icon">📄</div>
-            <div class="file-info">
-                <span class="file-name">${msgData.fileName}</span>
-                <span class="file-size">${formatBytes(msgData.fileSize)}</span>
-            </div>
-        `;
+        link.innerHTML = `📄 ${data.fileName} <span style="font-size:0.8em; opacity:0.7">(${formatBytes(data.fileSize)})</span>`;
         msgDiv.appendChild(link);
-    } else if (msgData.type === 'audio') {
+    } else if (data.type === 'audio') {
         const audio = document.createElement('audio');
+        audio.src = data.content;
         audio.controls = true;
         audio.className = 'audio-player';
-        audio.src = msgData.content; // Blob URL
         msgDiv.appendChild(audio);
     } else {
-        // Default to text message with Markdown (including 'text' type)
-        const rawHtml = marked.parse(msgData.content);
+        const rawHtml = marked.parse(data.content);
         const cleanHtml = DOMPurify.sanitize(rawHtml);
         msgDiv.innerHTML = cleanHtml;
         msgDiv.querySelectorAll('pre code').forEach((block) => {
@@ -600,15 +714,26 @@ function addMessage(msgData, className, senderName, timeStr) {
         });
     }
 
-    const timeDiv = document.createElement('div');
+    const timeDiv = document.createElement('span');
     timeDiv.className = 'timestamp';
-    const date = timeStr ? new Date(timeStr) : new Date();
-    timeDiv.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const date = timestamp ? new Date(timestamp) : new Date();
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    // Add read status indicator for my messages
+    let statusHtml = '';
+    if (className === 'my-message') {
+        statusHtml = ` <span class="read-status" style="margin-left:5px; font-weight:bold;">✓</span>`;
+    }
+
+    timeDiv.innerHTML = `${timeStr}${statusHtml}`;
     msgDiv.appendChild(timeDiv);
 
     if (className === 'their-message') {
-        wrapper.appendChild(nameLabel);
+        if (senderName !== 'Anonymous') {
+            wrapper.appendChild(nameLabel);
+        }
+        // Observe for read receipt
+        observeMessage(wrapper, messageId);
     }
     wrapper.appendChild(msgDiv);
 
@@ -623,6 +748,39 @@ function formatBytes(bytes, decimals = 2) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+// Read Receipt Observer
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const messageId = entry.target.dataset.messageId;
+            if (messageId) {
+                sendReadReceipt(messageId);
+                observer.unobserve(entry.target); // Only send once
+            }
+        }
+    });
+}, { threshold: 0.5 });
+
+function observeMessage(element, messageId) {
+    element.dataset.messageId = messageId;
+    observer.observe(element);
+}
+
+async function sendReadReceipt(messageId) {
+    if (!cryptoKey) return;
+
+    const payload = {
+        type: 'read_receipt',
+        content: { messageId },
+        timestamp: Date.now()
+    };
+
+    const enc = new TextEncoder();
+    const { data: encrypted, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
+
+    socket.emit('chat-message', { roomId, encryptedData: encrypted, iv, username });
 }
 
 function addSystemMessage(text) {
@@ -722,10 +880,27 @@ async function startScreenShare() {
         // Broadcast that we are sharing
         socket.emit('start-screen-share', roomId);
 
-        // Show local preview
-        localVideo.srcObject = screenStream;
-        videoOverlay.classList.remove('hidden');
-        callStatus.innerText = "Sharing Screen (Waiting for viewers...)";
+        // Do NOT show local preview in the main video overlay (hall of mirrors)
+        // Instead, show a floating status
+        const statusDiv = document.createElement('div');
+        statusDiv.id = 'screen-share-status';
+        statusDiv.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff4444;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            z-index: 3000;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            font-weight: bold;
+        `;
+        statusDiv.innerText = "Stop Sharing Screen";
+        statusDiv.onclick = stopScreenShare;
+        document.body.appendChild(statusDiv);
 
         screenTrack.onended = () => {
             stopScreenShare();
@@ -745,24 +920,78 @@ function stopScreenShare() {
 
         // Close all peer connections as we are no longer sharing
         endCall();
+
+        // Remove status overlay
+        const statusDiv = document.getElementById('screen-share-status');
+        if (statusDiv) statusDiv.remove();
     }
 }
 
 // Voice Messages
 let mediaRecorder = null;
 let audioChunks = [];
+let audioContext = null;
+let mediaStreamSource = null;
+let workletNode = null;
 
 async function toggleRecording() {
     const btn = document.getElementById('mic-btn');
+    const effect = document.getElementById('voice-effect').value;
 
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
         btn.classList.remove('recording');
         btn.innerText = '🎤';
+
+        // Cleanup AudioContext if used
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
     } else {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
+            let recordingStream = stream;
+
+            if (effect === 'robot') {
+                // Initialize AudioContext
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                mediaStreamSource = audioContext.createMediaStreamSource(stream);
+
+                // Create Ring Modulator Effect
+                const oscillator = audioContext.createOscillator();
+                oscillator.type = 'sine';
+                oscillator.frequency.value = 50; // Low frequency for robotic growl
+
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 0.0; // Start at 0, will be modulated
+
+                // We want to multiply source * oscillator.
+                // Web Audio API doesn't have a simple "multiply" node, but we can use GainNode modulation.
+                // Source -> GainNode (gain controlled by Oscillator) -> Destination
+
+                // Actually, a better "Robot" effect is often a Ring Modulator.
+                // Source -> GainNode (Input)
+                // Oscillator -> GainNode.gain
+
+                const ringMod = audioContext.createGain();
+                ringMod.gain.value = 0.0; // Controlled by oscillator
+
+                // Connect Oscillator to Gain param
+                oscillator.connect(ringMod.gain);
+
+                // Connect Source to Ring Mod
+                mediaStreamSource.connect(ringMod);
+
+                // Create Destination
+                const dest = audioContext.createMediaStreamDestination();
+                ringMod.connect(dest);
+
+                oscillator.start();
+                recordingStream = dest.stream;
+            }
+
+            mediaRecorder = new MediaRecorder(recordingStream);
             audioChunks = [];
 
             mediaRecorder.ondataavailable = (e) => {
@@ -799,12 +1028,14 @@ async function toggleRecording() {
                 };
                 reader.readAsDataURL(blob);
 
+                // Stop all tracks
                 stream.getTracks().forEach(track => track.stop());
             };
 
             mediaRecorder.start();
             btn.classList.add('recording');
             btn.innerText = '⏹️';
+
         } catch (err) {
             console.error("Error accessing microphone:", err);
             addSystemMessage("Error: Could not access microphone.");
@@ -812,18 +1043,137 @@ async function toggleRecording() {
     }
 }
 
+function endChat() {
+    if (confirm("Are you sure? This will delete all local data and leave the chat.")) {
+        // Clear all storage
+        sessionStorage.clear();
+        localStorage.clear();
+
+        // Close socket
+        socket.disconnect();
+
+        // Attempt to close window
+        window.close();
+
+        // If window.close() fails (which it often does if not opened by script), show overlay
+        document.body.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#111; color:#fff; font-family:sans-serif;">
+                <h1>Chat Ended</h1>
+                <p>All local data has been destroyed.</p>
+                <p>You can safely close this tab now.</p>
+                <button onclick="window.location.href='/'" style="margin-top:20px; padding:10px 20px; cursor:pointer;">Go Home</button>
+            </div>
+        `;
+    }
+}
+
+// Whiteboard Logic
+const canvas = document.getElementById('whiteboard-canvas');
+const ctx = canvas.getContext('2d');
+let isDrawing = false;
+let lastX = 0;
+let lastY = 0;
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight - 50; // Subtract controls height
+}
+
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function toggleWhiteboard() {
+    const wb = document.getElementById('whiteboard-overlay');
+    wb.classList.toggle('hidden');
+    if (!wb.classList.contains('hidden')) {
+        resizeCanvas();
+    }
+}
+
+function clearWhiteboard() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    sendDrawEvent('clear', {});
+}
+
+function startDrawing(e) {
+    isDrawing = true;
+    [lastX, lastY] = [e.offsetX || e.touches[0].clientX, e.offsetY || e.touches[0].clientY - 50]; // Adjust for header
+}
+
+function draw(e) {
+    if (!isDrawing) return;
+
+    const x = e.offsetX || e.touches[0].clientX;
+    const y = e.offsetY || (e.touches[0].clientY - 50);
+
+    const color = document.getElementById('wb-color').value;
+    const width = document.getElementById('wb-width').value;
+
+    // Draw locally
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // Send event
+    sendDrawEvent('draw', {
+        x0: lastX, y0: lastY, x1: x, y1: y, color, width
+    });
+
+    [lastX, lastY] = [x, y];
+}
+
+function stopDrawing() {
+    isDrawing = false;
+}
+
+canvas.addEventListener('mousedown', startDrawing);
+canvas.addEventListener('mousemove', draw);
+canvas.addEventListener('mouseup', stopDrawing);
+canvas.addEventListener('mouseout', stopDrawing);
+
+// Touch support
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    startDrawing(e);
+});
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    draw(e);
+});
+canvas.addEventListener('touchend', stopDrawing);
+
+async function sendDrawEvent(action, data) {
+    if (!cryptoKey) return;
+
+    const payload = {
+        type: 'whiteboard',
+        content: { action, ...data },
+        timestamp: Date.now()
+    };
+
+    const enc = new TextEncoder();
+    const { data: encrypted, iv } = await encryptData(enc.encode(JSON.stringify(payload)));
+
+    socket.emit('chat-message', { roomId, encryptedData: encrypted, iv, username });
+}
+
 // Exports
 window.copyLink = copyLink;
 window.sendMessage = sendMessage;
 window.setUsername = setUsername;
 window.handleFileSelect = handleFileSelect;
-window.startCall = startCall;
-window.endCall = endCall;
 window.startScreenShare = startScreenShare;
 window.toggleRecording = toggleRecording;
 window.showQRCode = showQRCode;
 window.hideQRCode = hideQRCode;
 window.joinStream = joinStream;
+window.toggleWhiteboard = toggleWhiteboard;
+window.clearWhiteboard = clearWhiteboard;
+window.toggleUsernameInput = toggleUsernameInput;
 
 // UI
 function toggleSidebar() {
@@ -832,6 +1182,17 @@ function toggleSidebar() {
 }
 
 window.toggleSidebar = toggleSidebar;
+
+// Whiteboard Notification Debounce
+let wbNotificationTimeout = {};
+function notifyWhiteboardActivity(name) {
+    if (wbNotificationTimeout[name]) return;
+
+    addSystemMessage(`${name} is drawing on the whiteboard.`);
+    wbNotificationTimeout[name] = setTimeout(() => {
+        delete wbNotificationTimeout[name];
+    }, 30000); // Notify at most once every 30 seconds per user
+}
 
 // Start
 init();

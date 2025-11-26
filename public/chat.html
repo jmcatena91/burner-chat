@@ -27,6 +27,10 @@
             <div id="link-box" onclick="copyLink()">
                 <span>Generating Room...</span>
             </div>
+            <button class="icon-btn small-btn" onclick="endChat()" title="End Chat & Delete Data"
+                style="background-color: #ff4444; margin-left: 0.5rem;">
+                ❌
+            </button>
         </div>
     </div>
 
@@ -47,15 +51,21 @@
             title="Send File">
             📎
         </button>
-        <button type="button" class="icon-btn" onclick="startCall()" title="Start Video Call">
-            📹
-        </button>
         <button type="button" class="icon-btn" onclick="startScreenShare()" title="Share Screen">
             🖥️
         </button>
-        <button type="button" class="icon-btn" id="mic-btn" onclick="toggleRecording()" title="Voice Message">
-            🎤
+        <button type="button" class="icon-btn" onclick="toggleWhiteboard()" title="Whiteboard">
+            ✏️
         </button>
+        <div class="voice-controls" style="display: flex; align-items: center; gap: 0.5rem;">
+            <select id="voice-effect" class="small-select" title="Voice Effect">
+                <option value="normal">Normal</option>
+                <option value="robot">Robot (Masked)</option>
+            </select>
+            <button type="button" class="icon-btn" id="mic-btn" onclick="toggleRecording()" title="Voice Message">
+                🎤
+            </button>
+        </div>
         <input type="file" id="file-input" hidden onchange="handleFileSelect(event)">
 
         <input type="text" id="message-input" placeholder="Type a secure message..." autocomplete="off">
@@ -67,9 +77,14 @@
         <div class="modal" id="username-modal">
             <h2>Welcome</h2>
             <p>Enter a display name to join the chat.</p>
-            <input type="text" id="username-input" placeholder="Your Name" maxlength="15"
-                onkeydown="if(event.key === 'Enter') setUsername()">
-            <button onclick="setUsername()">Join Chat</button>
+            <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
+                <input type="checkbox" id="anon-checkbox" onchange="toggleUsernameInput()">
+                <label for="anon-checkbox" style="margin-left: 0.5rem; font-size: 0.9rem;">Join Anonymously</label>
+            </div>
+            <input type="text" id="username-input" placeholder="Your Name" maxlength="15">
+            <input type="password" id="password-input" placeholder="Room Password (Optional)"
+                style="margin-top: 0.5rem;">
+            <button onclick="setUsername()" style="margin-top: 1rem;">Join Chat</button>
         </div>
     </div>
 
@@ -77,7 +92,6 @@
     <div id="video-call-overlay" class="hidden">
         <div class="video-container">
             <video id="remote-video" autoplay playsinline></video>
-            <video id="local-video" autoplay playsinline muted></video>
             <div class="call-controls">
                 <button onclick="endCall()" class="end-call-btn" title="End Call">
                     📞
@@ -95,6 +109,17 @@
             <p style="margin-top: 1rem; font-size: 0.9rem; opacity: 0.7;">Scan with your phone camera</p>
             <button onclick="hideQRCode()" style="margin-top: 1rem;">Close</button>
         </div>
+    </div>
+
+    <!-- Whiteboard Overlay -->
+    <div id="whiteboard-overlay" class="hidden">
+        <div class="whiteboard-controls">
+            <input type="color" id="wb-color" value="#000000">
+            <input type="range" id="wb-width" min="1" max="20" value="2">
+            <button onclick="clearWhiteboard()">Clear</button>
+            <button onclick="toggleWhiteboard()">Close</button>
+        </div>
+        <canvas id="whiteboard-canvas"></canvas>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
