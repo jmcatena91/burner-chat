@@ -11,13 +11,17 @@
 
 ## ✨ Features
 
-- **🔒 End-to-End Encryption**: All messages and files are encrypted using AES-GCM (256-bit) before leaving your browser. The server never sees the raw content.
-- **👻 Ephemeral**: No database. No message history. Once you close the tab, the data is gone forever.
-- **📹 Secure Video Calling**: Peer-to-peer encrypted video calls using WebRTC.
+- **🔒 End-to-End Encryption**: All messages, files, and drawings are encrypted using AES-GCM (256-bit) before leaving your browser.
+- **👻 Ephemeral**: No database. No message history. Data is wiped from memory when the room closes.
+- **🔐 Room Passwords**: Optional password protection for extra security when creating rooms.
+- **🕵️ Anonymous Mode**: Join without a name. Your identity remains hidden in the chat and user list.
+- **🤖 Voice Masking**: Send voice messages with a "Robot" voice effect to mask your real voice.
+- **✏️ Encrypted Whiteboard**: Collaborate in real-time on a shared, end-to-end encrypted drawing board.
+- **✅ Read Receipts**: See when your messages have been delivered (✓) and read (✓✓) by others.
+- **🖥️ Privacy-First Screen Sharing**: Share your screen without a "hall of mirrors" effect, with clear status indicators.
+- **❌ Secure End Chat**: Instantly wipe all local data and close the session with a single click.
 - **📂 File Sharing**: Send images and files (up to 2MB) securely.
-- **🔗 Short, Secure Links**: Shareable links contain the encryption key in the URL fragment, ensuring only those with the link can decrypt the chat.
-- **👥 User List**: See who is currently in the room with you.
-- **🎨 Modern UI**: A sleek, dark-themed interface with glassmorphism effects.
+- **🎨 Modern UI**: A sleek, dark-themed interface optimized for both desktop and mobile.
 
 ---
 
