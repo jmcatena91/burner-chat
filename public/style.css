@@ -174,8 +174,17 @@ body {
 
 /* Responsive Sidebar */
 @media (max-width: 768px) {
+    #menu-btn {
+        display: flex !important;
+    }
+
     #sidebar {
         position: absolute;
+        top: 0;
+        /* Relative to main-layout, but main-layout is flex */
+        /* Actually sidebar is child of main-layout. */
+        /* Let's make it absolute within main-layout or fixed */
+        position: fixed;
         top: 60px;
         left: 0;
         height: calc(100vh - 60px);
@@ -184,11 +193,40 @@ body {
         background: rgba(24, 24, 27, 0.95);
         backdrop-filter: blur(10px);
         width: 80%;
+        max-width: 300px;
+        box-shadow: 4px 0 15px rgba(0, 0, 0, 0.5);
     }
 
     #sidebar.open {
         transform: translateX(0);
     }
+
+    /* Overlay when sidebar is open */
+    #sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 60px;
+        left: 0;
+        width: 100%;
+        height: calc(100vh - 60px);
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 15;
+    }
+
+    #sidebar-overlay.visible {
+        display: block;
+    }
+}
+
+.join-btn {
+    background: var(--primary-gradient);
+    border: none;
+    border-radius: 4px;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    margin-left: auto;
 }
 
 /* Messages */
@@ -535,6 +573,94 @@ body {
     background: rgba(255, 255, 255, 0.2);
     color: white;
     transform: translateY(-1px);
+}
+
+/* Small icon button */
+.small-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+    padding: 0;
+}
+
+/* Recording State */
+.recording {
+    background: #ef4444 !important;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    }
+}
+
+/* QR Code Modal */
+#qr-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(4px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    transition: opacity 0.3s;
+}
+
+#qr-modal-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+#qrcode-container {
+    display: flex;
+    justify-content: center;
+    margin: 1rem 0;
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+#qrcode-container canvas {
+    width: 200px !important;
+    height: 200px !important;
+}
+
+/* Audio Message */
+.audio-player {
+    width: 100%;
+    min-width: 250px;
+    /* Ensure it's not too thin */
+    max-width: 100%;
+    /* Allow full width */
+    margin-top: 0.5rem;
+    display: block;
+}
+
+/* Code Blocks */
+pre {
+    background: #282c34;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+
+code {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.9rem;
 }
 
 /* Video Call Overlay */

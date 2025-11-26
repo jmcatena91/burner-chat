@@ -6,7 +6,10 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // Serve static files from the 'public' directory
+// Serve static files from the 'public' directory
 app.use(express.static('public'));
+app.use('/libs/marked', express.static(__dirname + '/node_modules/marked'));
+app.use('/libs/highlight.js', express.static(__dirname + '/node_modules/highlight.js'));
 
 // Store room users: { roomId: { socketId: username } }
 const roomUsers = {};
@@ -18,13 +21,27 @@ io.on('connection', (socket) => {
 
     // Store user info
     if (!roomUsers[roomId]) roomUsers[roomId] = {};
-    roomUsers[roomId][socket.id] = username;
+    roomUsers[roomId][socket.id] = { username, isSharing: false, id: socket.id };
 
     // Notify others
     socket.to(roomId).emit('user-connected', username);
 
     // Update user list for everyone in room
     io.to(roomId).emit('room-users', Object.values(roomUsers[roomId]));
+  });
+
+  socket.on('start-screen-share', (roomId) => {
+    if (roomUsers[roomId] && roomUsers[roomId][socket.id]) {
+      roomUsers[roomId][socket.id].isSharing = true;
+      io.to(roomId).emit('room-users', Object.values(roomUsers[roomId]));
+    }
+  });
+
+  socket.on('stop-screen-share', (roomId) => {
+    if (roomUsers[roomId] && roomUsers[roomId][socket.id]) {
+      roomUsers[roomId][socket.id].isSharing = false;
+      io.to(roomId).emit('room-users', Object.values(roomUsers[roomId]));
+    }
   });
 
   socket.on('chat-message', ({ roomId, encryptedData, iv, username, type, fileName, fileSize, mimeType }) => {
@@ -62,7 +79,7 @@ io.on('connection', (socket) => {
     // Check which rooms the user was in
     for (const roomId of socket.rooms) {
       if (roomUsers[roomId] && roomUsers[roomId][socket.id]) {
-        const username = roomUsers[roomId][socket.id];
+        const { username } = roomUsers[roomId][socket.id];
 
         // Notify others
         socket.to(roomId).emit('user-disconnected', username);

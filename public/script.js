@@ -190,7 +190,7 @@ async function handleFileSelect(e) {
 
 // WebRTC Logic
 let localStream = null;
-let peerConnection = null;
+let peers = {}; // { socketId: RTCPeerConnection }
 const config = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -200,83 +200,100 @@ const config = {
 
 const videoOverlay = document.getElementById('video-call-overlay');
 const localVideo = document.getElementById('local-video');
-const remoteVideo = document.getElementById('remote-video');
+const remoteVideo = document.getElementById('remote-video'); // Note: This might need to handle multiple videos in future, but for now 1:1 viewing
 const callStatus = document.getElementById('call-status');
 
-async function startCall() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
+// Helper to create a peer connection
+function createPeerConnection(targetId) {
+    const pc = new RTCPeerConnection(config);
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            sendSignal({ type: 'candidate', candidate: event.candidate }, targetId);
+        }
+    };
+
+    pc.ontrack = (event) => {
+        // For now, we assume we are viewing one stream at a time or the last one joined
+        remoteVideo.srcObject = event.streams[0];
+        callStatus.innerText = "Connected";
         videoOverlay.classList.remove('hidden');
-        callStatus.innerText = "Waiting for peer...";
+    };
 
-        createPeerConnection();
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            closePeer(targetId);
+        }
+    };
 
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
+    peers[targetId] = pc;
+    return pc;
+}
 
-        sendSignal({ type: 'offer', sdp: offer });
-    } catch (err) {
-        console.error("Error starting call:", err);
-        addSystemMessage("Error: Could not start call.");
+function closePeer(targetId) {
+    if (peers[targetId]) {
+        peers[targetId].close();
+        delete peers[targetId];
+    }
+    // If no peers left, hide overlay? Or just clear video
+    if (Object.keys(peers).length === 0) {
+        videoOverlay.classList.add('hidden');
+        remoteVideo.srcObject = null;
     }
 }
 
-function createPeerConnection() {
-    peerConnection = new RTCPeerConnection(config);
+async function joinStream(targetId) {
+    // Viewer initiates connection
+    try {
+        const pc = createPeerConnection(targetId);
 
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            sendSignal({ type: 'candidate', candidate: event.candidate });
-        }
-    };
+        // Create offer to receive (recvonly) or send/recv? 
+        // Usually viewer just wants to see. 
+        // But standard WebRTC requires at least one track or data channel for some setups, 
+        // but recvonly is fine.
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
 
-    peerConnection.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-        callStatus.innerText = "Connected";
-    };
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
-    peerConnection.onconnectionstatechange = () => {
-        if (peerConnection.connectionState === 'disconnected') {
-            endCall();
-        }
-    };
+        sendSignal({ type: 'offer', sdp: offer }, targetId);
+        callStatus.innerText = "Connecting...";
+        videoOverlay.classList.remove('hidden');
+    } catch (err) {
+        console.error("Error joining stream:", err);
+    }
 }
 
 async function handleSignal(signal, senderId) {
-    if (!peerConnection) {
-        // Incoming call
-        if (signal.type === 'offer') {
-            const accept = confirm("Incoming Video Call. Accept?");
-            if (!accept) return; // TODO: Send reject
+    let pc = peers[senderId];
 
-            videoOverlay.classList.remove('hidden');
-            callStatus.innerText = "Connecting...";
+    if (signal.type === 'offer') {
+        // Incoming offer (likely from a viewer if we are sharing, OR from a sharer if they initiated - but we changed flow)
+        // In our new flow: Viewer sends offer (recvonly). Sharer answers.
 
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                localVideo.srcObject = localStream;
-
-                createPeerConnection();
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-
-                sendSignal({ type: 'answer', sdp: answer }, senderId);
-            } catch (err) {
-                console.error("Error answering call:", err);
-                endCall();
-            }
+        if (!pc) {
+            pc = createPeerConnection(senderId);
         }
-    } else {
-        // Existing call
-        if (signal.type === 'answer') {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-        } else if (signal.type === 'candidate') {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+
+        // If we are sharing, add our tracks
+        if (screenStream) {
+            screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        sendSignal({ type: 'answer', sdp: answer }, senderId);
+
+    } else if (signal.type === 'answer') {
+        if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        }
+    } else if (signal.type === 'candidate') {
+        if (pc) {
+            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
         }
     }
 }
@@ -289,7 +306,7 @@ async function sendSignal(data, target = null) {
     socket.emit('signal', {
         roomId,
         signalData: { encryptedData, iv },
-        target
+        target // Target is now required for 1:1 signaling in Mesh
     });
 }
 
@@ -304,14 +321,14 @@ socket.on('signal', async ({ signalData, sender }) => {
 });
 
 function endCall() {
+    // Close all peers
+    Object.keys(peers).forEach(id => closePeer(id));
+
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
         localStream = null;
     }
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
+
     videoOverlay.classList.add('hidden');
     remoteVideo.srcObject = null;
 }
@@ -355,7 +372,35 @@ socket.on('room-users', (users) => {
         userListEl.innerHTML = '';
         users.forEach(user => {
             const li = document.createElement('li');
-            li.textContent = user;
+
+            // Handle object structure { username, isSharing } or legacy string
+            let name = user;
+            let isSharing = false;
+            let socketId = null;
+
+            if (typeof user === 'object') {
+                name = user.username;
+                isSharing = user.isSharing;
+                // We need socketId to join, but room-users array values are just the user objects. 
+                // Wait, server sends Object.values(roomUsers[roomId]). 
+                // roomUsers[roomId] is { socketId: { username, isSharing } }.
+                // So Object.values loses the socketId key! 
+                // I need to update server to include socketId in the object.
+            }
+
+            li.textContent = name;
+
+            if (isSharing && name !== username) {
+                const joinBtn = document.createElement('button');
+                joinBtn.innerText = 'Join Stream';
+                joinBtn.className = 'join-btn';
+                // We need the socketId here. 
+                // Temporary fix: I will update server.js to include id.
+                // For now, let's assume I fix server.js next.
+                joinBtn.onclick = () => joinStream(user.id);
+                li.appendChild(joinBtn);
+            }
+
             userListEl.appendChild(li);
         });
     }
@@ -419,6 +464,18 @@ function addMessage(msgData, className, senderName, timeStr) {
             </div>
         `;
         msgDiv.appendChild(link);
+    } else if (msgData.type === 'audio') {
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        audio.className = 'audio-player';
+        audio.src = msgData.content; // Blob URL
+        msgDiv.appendChild(audio);
+    } else {
+        // Default to text message with Markdown (including 'text' type)
+        msgDiv.innerHTML = marked.parse(msgData.content);
+        msgDiv.querySelectorAll('pre code').forEach((block) => {
+            hljs.highlightElement(block);
+        });
     }
 
     const timeDiv = document.createElement('div');
@@ -472,12 +529,126 @@ function copyLink() {
 }
 
 // Global exposure for HTML event handlers
+// Screen Sharing
+let screenStream = null;
+async function startScreenShare() {
+    try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+
+        // Broadcast that we are sharing
+        socket.emit('start-screen-share', roomId);
+
+        // Show local preview
+        localVideo.srcObject = screenStream;
+        videoOverlay.classList.remove('hidden');
+        callStatus.innerText = "Sharing Screen (Waiting for viewers...)";
+
+        screenTrack.onended = () => {
+            stopScreenShare();
+        };
+
+    } catch (err) {
+        console.error("Error sharing screen:", err);
+    }
+}
+
+function stopScreenShare() {
+    if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        screenStream = null;
+
+        socket.emit('stop-screen-share', roomId);
+
+        // Close all peer connections as we are no longer sharing
+        endCall();
+    }
+}
+
+// Voice Messages
+let mediaRecorder = null;
+let audioChunks = [];
+
+async function toggleRecording() {
+    const btn = document.getElementById('mic-btn');
+
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        btn.classList.remove('recording');
+        btn.innerText = '🎤';
+    } else {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                const buffer = await blob.arrayBuffer();
+                const { data, iv } = await encryptData(buffer);
+
+                socket.emit('chat-message', {
+                    roomId,
+                    encryptedData: data,
+                    iv,
+                    username,
+                    type: 'audio',
+                    mimeType: 'audio/webm'
+                });
+
+                const url = URL.createObjectURL(blob);
+                addMessage({ type: 'audio', content: url }, 'my-message', username);
+
+                stream.getTracks().forEach(track => track.stop());
+            };
+
+            mediaRecorder.start();
+            btn.classList.add('recording');
+            btn.innerText = '⏹️';
+        } catch (err) {
+            console.error("Error accessing microphone:", err);
+            addSystemMessage("Error: Could not access microphone.");
+        }
+    }
+}
+
+// QR Code
+function showQRCode() {
+    const modal = document.getElementById('qr-modal-overlay');
+    const container = document.getElementById('qrcode-container');
+    container.innerHTML = '';
+
+    QRCode.toCanvas(window.location.href, { width: 200 }, function (err, canvas) {
+        if (err) console.error(err);
+        container.appendChild(canvas);
+    });
+
+    modal.classList.remove('hidden');
+}
+
+// Exports
 window.copyLink = copyLink;
 window.sendMessage = sendMessage;
 window.setUsername = setUsername;
 window.handleFileSelect = handleFileSelect;
 window.startCall = startCall;
 window.endCall = endCall;
+window.startScreenShare = startScreenShare;
+window.toggleRecording = toggleRecording;
+window.showQRCode = showQRCode;
+window.joinStream = joinStream;
+
+// UI
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('open');
+}
+
+window.toggleSidebar = toggleSidebar;
 
 // Start
 init();
