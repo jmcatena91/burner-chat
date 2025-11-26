@@ -1,52 +1,92 @@
-**Burner Chat**
+# 🔥 Burner Chat
 
-A minimal, lightweight chat demo built with Node.js, Express and Socket.IO. This repository contains a simple static client (`index.html`) and a small server (`server.js`) so you can run a local real-time chat quickly for testing or demos.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D16-green.svg)
+![Socket.IO](https://img.shields.io/badge/Socket.IO-4.x-black.svg)
+![WebRTC](https://img.shields.io/badge/WebRTC-Enabled-red.svg)
 
-**Features**
-- **Minimal**: Small code surface; easy to read and adapt.
-- **Real-time**: Uses `socket.io` for bi-directional realtime messaging.
-- **Standalone**: Single-server setup — no database required for ephemeral chats.
+**Burner Chat** is a secure, ephemeral, and lightweight real-time messaging application. Designed for privacy, it ensures that your conversations, files, and video calls are encrypted and leave no trace once the session ends.
 
-**Quick Start**
-- **Prerequisites**: Node.js (v16+) and `npm` installed.
-- **Install dependencies**: `npm install`
-- **Run the server**: `node server.js`
-- **Open the client**: open `index.html` in your browser or visit `http://localhost:3000` if the server serves the file.
+---
 
-If you prefer an `npm` script for starting, add this to `package.json` under `scripts`:
+## ✨ Features
 
+- **🔒 End-to-End Encryption**: All messages and files are encrypted using AES-GCM (256-bit) before leaving your browser. The server never sees the raw content.
+- **👻 Ephemeral**: No database. No message history. Once you close the tab, the data is gone forever.
+- **📹 Secure Video Calling**: Peer-to-peer encrypted video calls using WebRTC.
+- **📂 File Sharing**: Send images and files (up to 2MB) securely.
+- **🔗 Short, Secure Links**: Shareable links contain the encryption key in the URL fragment, ensuring only those with the link can decrypt the chat.
+- **👥 User List**: See who is currently in the room with you.
+- **🎨 Modern UI**: A sleek, dark-themed interface with glassmorphism effects.
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- **Node.js** (v16 or higher)
+- **npm** (Node Package Manager)
+
+### Installation
+
+1. **Clone the repository** (if applicable) or download the source code.
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+### Running the Server
+
+Start the server using the provided script:
+```bash
+./restart_server.sh
 ```
-"start": "node server.js"
+*Or manually:*
+```bash
+node server.js
 ```
 
-Then run: `npm start`.
+The server will start on port **3000** by default.
 
-**Files of interest**
-- **`index.html`**: The client UI — open directly or served by the server.
-- **`server.js`**: Express + Socket.IO server implementation.
-- **`package.json`**: Project metadata and dependencies (`express`, `socket.io`).
+### Accessing the App
 
-**Configuration**
-- **Port**: The server listens on port `3000` by default (check `server.js`). To change it, set the `PORT` environment variable: `PORT=8080 node server.js`.
+Open your browser and navigate to:
+```
+http://localhost:3000
+```
 
-**Development**
-- Edit `index.html` and `server.js` to customize behavior and UI.
-- Helpful commands:
-  - `npm install` : Install dependencies
-  - `node server.js` : Start the server
+1. Click **"Start Chatting"**.
+2. Enter a **Display Name**.
+3. Share the **Secure Room Link** (top right) with a friend.
+4. Start chatting, sharing files, or video calling!
 
-**Deploying / Production Notes**
-- This project is intended as a demo. For production use, add:
-  - Input sanitization and rate limiting
-  - Authentication and session handling
-  - Persistent storage if you want message history
-  - HTTPS and proper CORS configuration
+---
 
-**Contributing**
-- Feel free to open issues or pull requests with improvements, examples or bug fixes.
+## 🛠️ Technology Stack
 
-**License**
-- This project does not include an explicit license file. Add a `LICENSE` if you want to define usage terms.
+- **Frontend**: HTML5, CSS3 (Variables, Flexbox/Grid), Vanilla JavaScript
+- **Backend**: Node.js, Express
+- **Real-time Communication**: Socket.IO
+- **P2P Video**: WebRTC (STUN via Google)
+- **Cryptography**: Web Crypto API (AES-GCM)
 
-**Contact**
-- For quick help, open an issue in this repository.
+---
+
+## 🔒 Security Model
+
+1. **Key Generation**: When a room is created, a random 256-bit AES-GCM key is generated in the browser.
+2. **URL Sharing**: This key is encoded in the URL fragment (`#...`). URL fragments are **never sent to the server**.
+3. **Encryption**: Every message is encrypted with this key + a unique IV (Initialization Vector) before being sent over the WebSocket.
+4. **Decryption**: The recipient's browser uses the key from the URL to decrypt the message.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Feel free to open issues or submit pull requests to improve features or security.
+
+---
+
+## 📄 License
+
+This project is open-source and available under the MIT License.
